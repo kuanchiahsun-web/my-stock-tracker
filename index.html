@@ -2035,34 +2035,37 @@ function renderCalendar(type) {
   const prefix = `${year}-${String(month+1).padStart(2,'0')}`;
   const monthDays = Object.keys(dailyMap).filter(ds => ds.startsWith(prefix)).sort();
 
-  let monthVal = 0, monthRate = 0;
+  const stats = calcPortfolioStats();
   if (isReal) {
-    let monthRealizedSum = 0, monthCostSum = 0;
-    monthDays.forEach(ds => { monthRealizedSum += dailyMap[ds].realized; monthCostSum += dailyMap[ds].cost; });
-    monthVal  = monthRealizedSum;
-    monthRate = monthCostSum > 0 ? monthRealizedSum / monthCostSum : 0;
+    const rVal = stats.totalRealized;
+    const rSign = rVal >= 0;
+    summaryEl.innerHTML = `
+      <div class="cal-sum-block">
+        <div class="cal-sum-label">已實現損益</div>
+        <div class="cal-sum-val" style="color:${rSign?'#ff6060':'#40d48a'}">${rSign?'+':''}${fmtCalMoney(rVal)}</div>
+      </div>
+      <div class="cal-sum-block" style="margin-left:auto;">
+        <div class="cal-sum-label">有資料天數</div>
+        <div class="cal-sum-rate" style="color:var(--text2);">${monthDays.length} 天</div>
+      </div>`;
   } else {
-    if (monthDays.length) {
-      const last = dailyMap[monthDays[monthDays.length - 1]];
-      monthVal  = last.pnl;
-      monthRate = last.rate;
-    }
+    const uVal  = stats.totalUnrealized;
+    const uRate = stats.totalCost > 0 ? uVal / stats.totalCost : 0;
+    const uSign = uVal >= 0;
+    summaryEl.innerHTML = `
+      <div class="cal-sum-block">
+        <div class="cal-sum-label">未實現損益</div>
+        <div class="cal-sum-val" style="color:${uSign?'#ff6060':'#40d48a'}">${uSign?'+':''}${fmtCalMoney(uVal)}</div>
+      </div>
+      <div class="cal-sum-block">
+        <div class="cal-sum-label">報酬率</div>
+        <div class="cal-sum-rate" style="color:${uSign?'#ff6060':'#40d48a'}">${uSign?'+':''}${(uRate*100).toFixed(2)}%</div>
+      </div>
+      <div class="cal-sum-block" style="margin-left:auto;">
+        <div class="cal-sum-label">有資料天數</div>
+        <div class="cal-sum-rate" style="color:var(--text2);">${monthDays.length} 天</div>
+      </div>`;
   }
-
-  const mSign = monthVal >= 0;
-  summaryEl.innerHTML = `
-    <div class="cal-sum-block">
-      <div class="cal-sum-label">${isReal ? '本月已實現損益' : '本月未實現損益'}</div>
-      <div class="cal-sum-val" style="color:${mSign?'#ff6060':'#40d48a'}">${mSign?'+':''}${fmtCalMoney(monthVal)}</div>
-    </div>
-    <div class="cal-sum-block">
-      <div class="cal-sum-label">報酬率</div>
-      <div class="cal-sum-rate" style="color:${mSign?'#ff6060':'#40d48a'}">${mSign?'+':''}${(monthRate*100).toFixed(2)}%</div>
-    </div>
-    <div class="cal-sum-block" style="margin-left:auto;">
-      <div class="cal-sum-label">有資料天數</div>
-      <div class="cal-sum-rate" style="color:var(--text2);">${monthDays.length} 天</div>
-    </div>`;
 
   // Build calendar grid
   const firstDay = new Date(year, month, 1);
