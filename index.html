@@ -1971,12 +1971,16 @@ function buildUnrealizedDailyMap() {
     }
   });
 
+  // Total cost of all held stocks (same denominator as summary card)
+  const totalCost = state.stocks
+    .filter(s => s.status !== '已賣出' && s.buyDate)
+    .reduce((sum, s) => sum + s.cost * s.shares, 0);
+
   const result = {};
   Object.keys(valueByDate).sort().forEach(ds => {
     const pnl  = valueByDate[ds] - (costByDate[ds] || 0);
-    const cost = costByDate[ds] || 0;
-    const rate = cost > 0 ? pnl / cost : 0;
-    result[ds] = { pnl, rate, value: valueByDate[ds], cost };
+    const rate = totalCost > 0 ? pnl / totalCost : 0;
+    result[ds] = { pnl, rate, value: valueByDate[ds], cost: totalCost };
   });
   return result;
 }
