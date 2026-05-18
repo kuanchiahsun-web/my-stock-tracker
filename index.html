@@ -1597,24 +1597,39 @@ function fillStockFields(s, fetchPrice = false) {
   if (fetchPrice) fetchAndFillPrice(s.yahooCode);
 }
 
-async function fetchRealtimePrice(yahooCode) {
-  // Primary: Yahoo Finance chart API
+async function fetchStockData(yahooCode) {
   const endpoints = [
-    `https://query1.finance.yahoo.com/v8/finance/chart/${yahooCode}?interval=1d&range=5d`,
-    `https://query2.finance.yahoo.com/v8/finance/chart/${yahooCode}?interval=1d&range=5d`,
+    `https://query1.finance.yahoo.com/v8/finance/chart/${yahooCode}?interval=1d&range=6mo`,
+    `https://query2.finance.yahoo.com/v8/finance/chart/${yahooCode}?interval=1d&range=6mo`,
   ];
   for (const url of endpoints) {
     try {
       const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
       if (!res.ok) continue;
       const data = await res.json();
-      const meta = data?.chart?.result?.[0]?.meta;
-      if (meta) {
-        const p = meta.regularMarketPrice ?? meta.previousClose;
-        if (p && p > 0) return parseFloat(p.toFixed(2));
-      }
+      const result = data?.chart?.result?.[0];
+      if (!result) continue;
+      const meta = result.meta;
+      const currentPrice = meta?.regularMarketPrice ?? meta?.previousClose;
+      const timestamps = result.timestamp || [];
+      const closes = result.indicators?.quote?.[0]?.close || [];
+      const history = {};
+      timestamps.forEach((ts, i) => {
+        if (closes[i] != null) {
+          const d = new Date(ts * 1000);
+          const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+          history[ds] = parseFloat(closes[i].toFixed(2));
+        }
+      });
+      return { price: currentPrice ? parseFloat(currentPrice.toFixed(2)) : null, history };
     } catch(_) {}
   }
+  return { price: null, history: {} };
+}
+
+async function fetchRealtimePrice(yahooCode) {
+  const { price } = await fetchStockData(yahooCode);
+  if (price && price > 0) return price;
   // Fallback: try CORS proxy to TWSE MIS
   try {
     const exCh = yahooCode.endsWith('.TWO')
@@ -1772,10 +1787,13 @@ async function refreshAllPrices() {
   for (const s of holding) {
     const match = stockListCache?.find(m => s.code.replace('.TW','').replace('.TWO','') === m.code);
     const yahooCode = match ? match.yahooCode : (s.code.includes('.') ? s.code : s.code + '.TW');
-    const price = await fetchRealtimePrice(yahooCode);
+    const { price, history } = await fetchStockData(yahooCode);
     if (price !== null) {
       s.priceHistory = [...(s.priceHistory || []), price];
       s.price = price;
+      if (Object.keys(history).length) {
+        s.historicalPrices = { ...(s.historicalPrices || {}), ...history };
+      }
       done++;
     } else {
       failed++;
@@ -1921,32 +1939,44 @@ function getPriceOnDate(stock, dateStr) {
 // ── Build unrealized daily map ───────────────────────────────
 function buildUnrealizedDailyMap() {
   const valueByDate = {};
+  const costByDate = {};
   const today = new Date(); today.setHours(0,0,0,0);
 
   state.stocks.forEach(stock => {
-    if (!stock.buyDate || !stock.priceHistory?.length) return;
+    if (!stock.buyDate || stock.status === '已賣出') return;
     const buyDate = new Date(stock.buyDate); buyDate.setHours(0,0,0,0);
-    const endDate = stock.status === '已賣出' && stock.sellDate
-      ? new Date(stock.sellDate) : new Date(today);
-    endDate.setHours(0,0,0,0);
-    const days = Math.round((endDate - buyDate) / 86400000);
-    for (let d = -1; d <= days; d++) {
-      const dt = new Date(buyDate); dt.setDate(dt.getDate() + d);
-      if (dt > today) break;
-      const ds = dt.toISOString().slice(0,10);
-      const price = getPriceOnDate(stock, ds);
-      if (price === null) continue;
-      valueByDate[ds] = (valueByDate[ds] || 0) + price * stock.shares;
+    const hp = stock.historicalPrices || {};
+    const hpDates = Object.keys(hp).filter(ds => {
+      const d = new Date(ds); d.setHours(0,0,0,0);
+      return d >= buyDate && d <= today;
+    });
+
+    if (hpDates.length) {
+      hpDates.forEach(ds => {
+        valueByDate[ds] = (valueByDate[ds] || 0) + hp[ds] * stock.shares;
+        costByDate[ds]  = (costByDate[ds] || 0) + stock.cost * stock.shares;
+      });
+    } else if (stock.priceHistory?.length) {
+      const endDate = new Date(today);
+      const days = Math.round((endDate - buyDate) / 86400000);
+      for (let d = 0; d <= days; d++) {
+        const dt = new Date(buyDate); dt.setDate(dt.getDate() + d);
+        if (dt > today) break;
+        const ds = dt.toISOString().slice(0,10);
+        const price = getPriceOnDate(stock, ds);
+        if (price === null) continue;
+        valueByDate[ds] = (valueByDate[ds] || 0) + price * stock.shares;
+        costByDate[ds]  = (costByDate[ds] || 0) + stock.cost * stock.shares;
+      }
     }
   });
 
-  const dates = Object.keys(valueByDate).sort();
   const result = {};
-  dates.forEach((ds, i) => {
-    const prev = i > 0 ? valueByDate[dates[i-1]] : valueByDate[ds];
-    const change = valueByDate[ds] - prev;
-    const rate   = prev > 0 && i > 0 ? change / prev : 0;
-    result[ds] = { change, rate, value: valueByDate[ds] };
+  Object.keys(valueByDate).sort().forEach(ds => {
+    const pnl  = valueByDate[ds] - (costByDate[ds] || 0);
+    const cost = costByDate[ds] || 0;
+    const rate = cost > 0 ? pnl / cost : 0;
+    result[ds] = { pnl, rate, value: valueByDate[ds], cost };
   });
   return result;
 }
@@ -1998,28 +2028,28 @@ function renderCalendar(type) {
 
   const dailyMap = isReal ? buildRealizedDailyMap() : buildUnrealizedDailyMap();
 
-  // Month totals
-  let monthChange = 0, monthPrevVal = 0, monthCost = 0;
   const prefix = `${year}-${String(month+1).padStart(2,'0')}`;
-  Object.entries(dailyMap).forEach(([ds, v]) => {
-    if (!ds.startsWith(prefix)) return;
-    if (isReal) { monthChange += v.realized; monthCost += v.cost; }
-    else        { monthChange += v.change; }
-  });
-  if (!isReal) {
-    // find last day of prev month portfolio value
-    const prevDays = Object.keys(dailyMap).filter(ds => ds < prefix + '-01').sort();
-    if (prevDays.length) monthPrevVal = dailyMap[prevDays[prevDays.length-1]].value;
-  }
-  const monthRate = isReal
-    ? (monthCost > 0 ? monthChange / monthCost : 0)
-    : (monthPrevVal > 0 ? monthChange / monthPrevVal : 0);
+  const monthDays = Object.keys(dailyMap).filter(ds => ds.startsWith(prefix)).sort();
 
-  const mSign = monthChange >= 0;
+  let monthVal = 0, monthRate = 0;
+  if (isReal) {
+    let monthRealizedSum = 0, monthCostSum = 0;
+    monthDays.forEach(ds => { monthRealizedSum += dailyMap[ds].realized; monthCostSum += dailyMap[ds].cost; });
+    monthVal  = monthRealizedSum;
+    monthRate = monthCostSum > 0 ? monthRealizedSum / monthCostSum : 0;
+  } else {
+    if (monthDays.length) {
+      const last = dailyMap[monthDays[monthDays.length - 1]];
+      monthVal  = last.pnl;
+      monthRate = last.rate;
+    }
+  }
+
+  const mSign = monthVal >= 0;
   summaryEl.innerHTML = `
     <div class="cal-sum-block">
-      <div class="cal-sum-label">${isReal ? '本月已實現損益' : '本月帳戶損益'}</div>
-      <div class="cal-sum-val" style="color:${mSign?'#ff6060':'#40d48a'}">${mSign?'+':''}${fmtCalMoney(monthChange)}</div>
+      <div class="cal-sum-label">${isReal ? '本月已實現損益' : '本月未實現損益'}</div>
+      <div class="cal-sum-val" style="color:${mSign?'#ff6060':'#40d48a'}">${mSign?'+':''}${fmtCalMoney(monthVal)}</div>
     </div>
     <div class="cal-sum-block">
       <div class="cal-sum-label">報酬率</div>
@@ -2027,7 +2057,7 @@ function renderCalendar(type) {
     </div>
     <div class="cal-sum-block" style="margin-left:auto;">
       <div class="cal-sum-label">有資料天數</div>
-      <div class="cal-sum-rate" style="color:var(--text2);">${Object.keys(dailyMap).filter(ds=>ds.startsWith(prefix)).length} 天</div>
+      <div class="cal-sum-rate" style="color:var(--text2);">${monthDays.length} 天</div>
     </div>`;
 
   // Build calendar grid
@@ -2035,33 +2065,32 @@ function renderCalendar(type) {
   const lastDay  = new Date(year, month+1, 0);
   const today    = new Date(); today.setHours(0,0,0,0);
 
-  // Mon=0 ... Sun=6 offset
-  let startDow = firstDay.getDay(); // 0=Sun
-  startDow = startDow === 0 ? 6 : startDow - 1; // convert to Mon-based
+  let startDow = firstDay.getDay();
+  startDow = startDow === 0 ? 6 : startDow - 1;
 
   const weeks = [];
   let week = Array(7).fill(null);
-  let weekPnl = 0, weekCost = 0, weekPrevVal = 0, hasWeekData = false;
+  let weekLastData = null, weekRealizedSum = 0, weekCostSum = 0, hasWeekData = false;
 
   const flushWeek = () => {
-    weeks.push({ days: [...week], pnl: weekPnl, cost: weekCost, prevVal: weekPrevVal, hasData: hasWeekData });
+    weeks.push({ days: [...week], lastData: weekLastData, realizedSum: weekRealizedSum, costSum: weekCostSum, hasData: hasWeekData });
     week = Array(7).fill(null);
-    weekPnl = 0; weekCost = 0; weekPrevVal = 0; hasWeekData = false;
+    weekLastData = null; weekRealizedSum = 0; weekCostSum = 0; hasWeekData = false;
   };
 
-  for (let col = 0; col < startDow; col++) week[col] = 0; // empty
+  for (let col = 0; col < startDow; col++) week[col] = 0;
 
   for (let d = 1; d <= lastDay.getDate(); d++) {
     const dt  = new Date(year, month, d); dt.setHours(0,0,0,0);
     const ds  = dt.toISOString().slice(0,10);
-    const dow = dt.getDay(); // 0=Sun
+    const dow = dt.getDay();
     const col = dow === 0 ? 6 : dow - 1;
     const dayData = dailyMap[ds] || null;
 
     if (dayData) {
       hasWeekData = true;
-      if (isReal) { weekPnl += dayData.realized; weekCost += dayData.cost; }
-      else        { weekPnl += dayData.change; }
+      if (isReal) { weekRealizedSum += dayData.realized; weekCostSum += dayData.cost; }
+      else        { weekLastData = dayData; }
     }
 
     week[col] = { d, ds, dt, data: dayData, isWeekend: dow === 0 || dow === 6, isFuture: dt > today };
@@ -2078,7 +2107,7 @@ function renderCalendar(type) {
       if (isWeekend) return `<div class="cal-cell weekend-cell"><div class="cal-date-num" style="color:#444">${d}</div></div>`;
       if (!data)     return `<div class="cal-cell nodata"><div class="cal-date-num">${d}</div></div>`;
 
-      const val  = isReal ? data.realized : data.change;
+      const val  = isReal ? data.realized : data.pnl;
       const rate = isReal
         ? (data.cost > 0 ? data.realized / data.cost : 0)
         : data.rate;
@@ -2100,18 +2129,23 @@ function renderCalendar(type) {
     }).join('');
 
     // Weekly total cell
-    const wSign    = w.pnl >= 0;
-    const wRateNum = isReal
-      ? (w.cost > 0 ? w.pnl / w.cost : 0)
-      : (w.prevVal > 0 ? w.pnl / w.prevVal : 0);
-    const wCls     = w.hasData ? (wSign ? 'week-profit' : 'week-loss') : 'week-zero';
-    const wDisp    = w.hasData ? `${wSign?'+':''}${fmtCalMoney(w.pnl)}` : '--';
-    const wRateStr = w.hasData ? `${wSign?'+':''}${(wRateNum*100).toFixed(1)}%` : '';
+    let wVal = 0, wRate = 0;
+    if (isReal) {
+      wVal  = w.realizedSum;
+      wRate = w.costSum > 0 ? w.realizedSum / w.costSum : 0;
+    } else if (w.lastData) {
+      wVal  = w.lastData.pnl;
+      wRate = w.lastData.rate;
+    }
+    const wSign = wVal >= 0;
+    const wCls  = w.hasData ? (wSign ? 'week-profit' : 'week-loss') : 'week-zero';
+    const wDisp = w.hasData ? `${wSign?'+':''}${fmtCalMoney(wVal)}` : '--';
+    const wRateStr = w.hasData ? `${wSign?'+':''}${(wRate*100).toFixed(1)}%` : '';
 
     return `<div class="cal-row">
       ${cells}
       <div class="cal-week-cell">
-        <div class="cal-week-label">週損益</div>
+        <div class="cal-week-label">${isReal ? '週已實現' : '週未實現'}</div>
         <div class="cal-week-val ${wCls}">${wDisp}</div>
         <div class="cal-week-rate ${wCls}">${wRateStr}</div>
       </div>
