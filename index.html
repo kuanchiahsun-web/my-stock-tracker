@@ -284,6 +284,76 @@ td input.inline-edit {
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin { display: inline-block; animation: spin 0.8s linear infinite; }
 
+/* ── Calendar ───────────────────────────────────────────────── */
+.cal-wrap { max-width: 860px; margin: 0 auto; }
+.cal-top-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.cal-month-nav { display: flex; align-items: center; gap: 10px; }
+.cal-nav-btn { background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 4px 12px; cursor: pointer; font-size: 14px; line-height: 1; transition: background 0.1s; }
+.cal-nav-btn:hover { background: var(--bg3); }
+.cal-month-label { font-size: 18px; font-weight: 700; min-width: 110px; text-align: center; }
+.cal-toggle { display: flex; gap: 6px; }
+.cal-toggle-btn { padding: 4px 12px; border: 1px solid var(--border); border-radius: 6px; background: none; color: var(--text2); cursor: pointer; font-size: 12px; transition: all 0.1s; }
+.cal-toggle-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.cal-summary { display: flex; gap: 24px; margin-bottom: 16px; padding: 12px 16px; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); }
+.cal-sum-block { display: flex; flex-direction: column; gap: 2px; }
+.cal-sum-label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; }
+.cal-sum-val { font-size: 22px; font-weight: 800; }
+.cal-sum-rate { font-size: 13px; font-weight: 600; }
+
+.cal-grid-header { display: grid; grid-template-columns: repeat(7, 1fr) 72px; gap: 4px; margin-bottom: 4px; }
+.cal-wday { text-align: center; font-size: 11px; color: var(--text2); padding: 4px 0; font-weight: 600; }
+.cal-wday.weekend { color: #555; }
+.cal-wday.week-col { color: var(--text2); text-align: right; padding-right: 6px; }
+
+.cal-grid { display: flex; flex-direction: column; gap: 4px; }
+.cal-row { display: grid; grid-template-columns: repeat(7, 1fr) 72px; gap: 4px; }
+
+.cal-cell {
+  border-radius: 8px;
+  padding: 6px 8px;
+  min-height: 72px;
+  display: flex;
+  flex-direction: column;
+  cursor: default;
+  border: 1px solid transparent;
+  transition: filter 0.1s;
+  position: relative;
+}
+.cal-cell:hover { filter: brightness(1.12); }
+.cal-cell.empty { background: transparent; border-color: transparent; cursor: default; pointer-events: none; }
+.cal-cell.nodata { background: var(--bg2); border-color: var(--border); opacity: 0.45; }
+.cal-cell.weekend-cell { background: var(--bg); border-color: var(--border); opacity: 0.4; }
+.cal-cell.future-cell { background: var(--bg); border-color: var(--border); opacity: 0.25; pointer-events: none; }
+.cal-cell.profit-cell { background: rgba(180,30,30,0.45); border-color: rgba(220,60,60,0.35); }
+.cal-cell.loss-cell   { background: rgba(15,90,50,0.5); border-color: rgba(30,140,80,0.35); }
+.cal-cell.break-even  { background: var(--bg3); border-color: var(--border); }
+
+.cal-date-num { font-size: 11px; color: rgba(255,255,255,0.45); align-self: flex-end; line-height: 1; }
+.cal-amount { font-size: 14px; font-weight: 700; margin-top: auto; line-height: 1.2; }
+.cal-rate-txt { font-size: 11px; margin-top: 3px; opacity: 0.85; }
+.profit-cell .cal-amount, .profit-cell .cal-rate-txt { color: #ff7070; }
+.loss-cell .cal-amount, .loss-cell .cal-rate-txt { color: #40d48a; }
+.break-even .cal-amount, .break-even .cal-rate-txt { color: var(--text2); }
+
+.cal-week-cell {
+  background: var(--bg3);
+  border-radius: 6px;
+  padding: 5px 7px;
+  min-height: 72px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-end;
+  border: 1px solid var(--border);
+}
+.cal-week-label { font-size: 9px; color: var(--text2); margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.5px; }
+.cal-week-val { font-size: 12px; font-weight: 700; }
+.cal-week-rate { font-size: 10px; margin-top: 1px; }
+.week-profit { color: #ff7070; }
+.week-loss   { color: #40d48a; }
+.week-zero   { color: var(--text2); }
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg2); }
@@ -342,6 +412,8 @@ td input.inline-edit {
     <button class="tab-btn" onclick="switchTab('transactions')">交易紀錄</button>
     <button class="tab-btn" onclick="switchTab('cash')">虛擬現金</button>
     <button class="tab-btn" onclick="switchTab('realized')">已實現損益</button>
+    <button class="tab-btn" onclick="switchTab('unrealized-cal')">📅 損益日曆</button>
+    <button class="tab-btn" onclick="switchTab('realized-cal')">📅 已實現日曆</button>
   </div>
 
   <!-- Portfolio Tab -->
@@ -484,6 +556,56 @@ td input.inline-edit {
         </thead>
         <tbody id="realizedBody"></tbody>
       </table>
+    </div>
+  </div>
+
+  <!-- Unrealized P&L Calendar Tab -->
+  <div class="tab-content" id="tab-unrealized-cal">
+    <div class="cal-wrap">
+      <div class="cal-top-header">
+        <div class="cal-month-nav">
+          <button class="cal-nav-btn" onclick="calNav('unrealized',-1)">&#8249;</button>
+          <span class="cal-month-label" id="unrealCalLabel">--</span>
+          <button class="cal-nav-btn" onclick="calNav('unrealized',1)">&#8250;</button>
+        </div>
+        <div class="cal-toggle">
+          <button class="cal-toggle-btn active" id="unrealToggleAmt" onclick="setCalMode('unrealized','amount')">損益金額</button>
+          <button class="cal-toggle-btn" id="unrealToggleRate" onclick="setCalMode('unrealized','rate')">報酬率</button>
+        </div>
+      </div>
+      <div class="cal-summary" id="unrealCalSummary"></div>
+      <div class="cal-grid-header">
+        <div class="cal-wday">一</div><div class="cal-wday">二</div><div class="cal-wday">三</div>
+        <div class="cal-wday">四</div><div class="cal-wday">五</div>
+        <div class="cal-wday weekend">六</div><div class="cal-wday weekend">日</div>
+        <div class="cal-wday week-col">週損益</div>
+      </div>
+      <div class="cal-grid" id="unrealCalGrid"></div>
+    </div>
+  </div>
+
+  <!-- Realized P&L Calendar Tab -->
+  <div class="tab-content" id="tab-realized-cal">
+    <div class="cal-wrap">
+      <div class="cal-top-header">
+        <div class="cal-month-nav">
+          <button class="cal-nav-btn" onclick="calNav('realized',-1)">&#8249;</button>
+          <span class="cal-month-label" id="realCalLabel">--</span>
+          <button class="cal-nav-btn" onclick="calNav('realized',1)">&#8250;</button>
+        </div>
+        <div class="cal-toggle">
+          <button class="cal-toggle-btn active" id="realToggleAmt" onclick="setCalMode('realized','amount')">損益金額</button>
+          <button class="cal-toggle-btn" id="realToggleRate" onclick="setCalMode('realized','rate')">報酬率</button>
+        </div>
+      </div>
+      <div class="cal-summary" id="realCalSummary"></div>
+      <div class="cal-grid-header">
+        <div class="cal-wday">一</div><div class="cal-wday">二</div><div class="cal-wday">三</div>
+        <div class="cal-wday">四</div><div class="cal-wday">五</div>
+        <div class="cal-wday weekend">六</div><div class="cal-wday weekend">日</div>
+        <div class="cal-wday week-col">週損益</div>
+      </div>
+      <div class="cal-grid" id="realCalGrid"></div>
     </div>
   </div>
 
@@ -963,7 +1085,7 @@ function drawSparkline(stock) {
   if (data.length < 2) data = [stock.cost, stock.price];
 
   const isUp = data[data.length - 1] >= data[0];
-  const color = isUp ? '#00c896' : '#ff4d6a';
+  const color = isUp ? '#ff4d6a' : '#00c896';
 
   sparkCharts[stock.id] = new Chart(canvas, {
     type: 'line',
@@ -974,7 +1096,7 @@ function drawSparkline(stock) {
         borderColor: color,
         borderWidth: 1.5,
         fill: true,
-        backgroundColor: isUp ? 'rgba(0,200,150,0.1)' : 'rgba(255,77,106,0.08)',
+        backgroundColor: isUp ? 'rgba(255,77,106,0.08)' : 'rgba(0,200,150,0.1)',
         pointRadius: 0,
         tension: 0.3
       }]
@@ -1030,7 +1152,7 @@ function renderBigChart(stock) {
 
   const canvas = document.getElementById('bigChartCanvas');
   const isUp = data[data.length - 1] >= data[0];
-  const color = isUp ? '#00c896' : '#ff4d6a';
+  const color = isUp ? '#ff4d6a' : '#00c896ff4d6a';
 
   const buyDate = new Date(stock.buyDate || new Date());
   const labels = data.map((_, i) => {
@@ -1051,7 +1173,7 @@ function renderBigChart(stock) {
           borderColor: color,
           borderWidth: 2,
           fill: true,
-          backgroundColor: isUp ? 'rgba(0,200,150,0.08)' : 'rgba(255,77,106,0.06)',
+          backgroundColor: isUp ? 'rgba(255,77,106,0.06)' : 'rgba(0,200,150,0.08)',
           pointRadius: 0,
           pointHoverRadius: 4,
           tension: 0.3
@@ -1321,14 +1443,16 @@ function setInitialCash() {
 //  TABS
 // ============================================================
 function switchTab(tab) {
+  const tabs = ['portfolio','transactions','cash','realized','unrealized-cal','realized-cal'];
   document.querySelectorAll('.tab-btn').forEach((b, i) => {
-    const tabs = ['portfolio','transactions','cash','realized'];
     b.classList.toggle('active', tabs[i] === tab);
   });
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.getElementById('tab-' + tab).classList.add('active');
-  if (tab === 'cash') renderCashPanel();
-  if (tab === 'realized') renderRealizedTable();
+  if (tab === 'cash')          renderCashPanel();
+  if (tab === 'realized')      renderRealizedTable();
+  if (tab === 'unrealized-cal') renderCalendar('unrealized');
+  if (tab === 'realized-cal')   renderCalendar('realized');
 }
 
 // ============================================================
@@ -1767,6 +1891,256 @@ function hideExportMenu() {
 document.addEventListener('click', e => {
   if (!document.getElementById('exportMenuBtn').contains(e.target)) hideExportMenu();
 });
+
+// ============================================================
+//  CALENDAR
+// ============================================================
+const calState = {
+  unrealized: { year: new Date().getFullYear(), month: new Date().getMonth(), mode: 'amount' },
+  realized:   { year: new Date().getFullYear(), month: new Date().getMonth(), mode: 'amount' }
+};
+
+// ── Price interpolation ──────────────────────────────────────
+function getPriceOnDate(stock, dateStr) {
+  if (!stock.buyDate || !stock.priceHistory?.length) return null;
+  const buyDate  = new Date(stock.buyDate);
+  const target   = new Date(dateStr);
+  if (target < buyDate) return null;
+  const endDate  = stock.status === '已賣出' && stock.sellDate ? new Date(stock.sellDate) : new Date();
+  if (target > endDate) return null;
+  const holdDays = Math.max(1, Math.round((endDate - buyDate) / 86400000));
+  const daysIn   = Math.round((target - buyDate) / 86400000);
+  const prices   = stock.priceHistory;
+  const n        = prices.length;
+  if (n === 1) return prices[0];
+  const t   = Math.min(daysIn / holdDays, 1) * (n - 1);
+  const idx = Math.min(Math.floor(t), n - 2);
+  return prices[idx] * (1 - (t - idx)) + prices[idx + 1] * (t - idx);
+}
+
+// ── Build unrealized daily map ───────────────────────────────
+function buildUnrealizedDailyMap() {
+  const valueByDate = {};
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  state.stocks.forEach(stock => {
+    if (!stock.buyDate || !stock.priceHistory?.length) return;
+    const buyDate = new Date(stock.buyDate); buyDate.setHours(0,0,0,0);
+    const endDate = stock.status === '已賣出' && stock.sellDate
+      ? new Date(stock.sellDate) : new Date(today);
+    endDate.setHours(0,0,0,0);
+    const days = Math.round((endDate - buyDate) / 86400000);
+    for (let d = -1; d <= days; d++) {
+      const dt = new Date(buyDate); dt.setDate(dt.getDate() + d);
+      if (dt > today) break;
+      const ds = dt.toISOString().slice(0,10);
+      const price = getPriceOnDate(stock, ds);
+      if (price === null) continue;
+      valueByDate[ds] = (valueByDate[ds] || 0) + price * stock.shares;
+    }
+  });
+
+  const dates = Object.keys(valueByDate).sort();
+  const result = {};
+  dates.forEach((ds, i) => {
+    const prev = i > 0 ? valueByDate[dates[i-1]] : valueByDate[ds];
+    const change = valueByDate[ds] - prev;
+    const rate   = prev > 0 && i > 0 ? change / prev : 0;
+    result[ds] = { change, rate, value: valueByDate[ds] };
+  });
+  return result;
+}
+
+// ── Build realized daily map ─────────────────────────────────
+function buildRealizedDailyMap() {
+  const map = {};
+  // From transaction records
+  state.transactions.filter(tx => tx.action === '賣出').forEach(tx => {
+    const stock = state.stocks.find(s =>
+      (s.code === tx.code || s.name === tx.name) && s.status === '已賣出'
+    );
+    const costPrice = stock ? stock.cost : 0;
+    const realized  = (tx.price - costPrice) * tx.shares;
+    const cost      = costPrice * tx.shares;
+    if (!map[tx.date]) map[tx.date] = { realized: 0, cost: 0, details: [] };
+    map[tx.date].realized += realized;
+    map[tx.date].cost     += cost;
+    map[tx.date].details.push({ name: tx.name, realized });
+  });
+  // Also from stocks marked as sold (without explicit tx)
+  state.stocks.filter(s => s.status === '已賣出' && s.sellDate && s.sellPrice).forEach(s => {
+    const hasTx = state.transactions.some(tx =>
+      tx.action === '賣出' && (tx.code === s.code || tx.name === s.name) && tx.date === s.sellDate
+    );
+    if (hasTx) return;
+    const realized = (s.sellPrice - s.cost) * s.shares;
+    const cost     = s.cost * s.shares;
+    if (!map[s.sellDate]) map[s.sellDate] = { realized: 0, cost: 0, details: [] };
+    map[s.sellDate].realized += realized;
+    map[s.sellDate].cost     += cost;
+    map[s.sellDate].details.push({ name: s.name, realized });
+  });
+  return map;
+}
+
+// ── Calendar render ──────────────────────────────────────────
+function renderCalendar(type) {
+  const cs     = calState[type];
+  const isReal = type === 'realized';
+  const year   = cs.year, month = cs.month;
+
+  const labelEl   = document.getElementById(isReal ? 'realCalLabel'   : 'unrealCalLabel');
+  const summaryEl = document.getElementById(isReal ? 'realCalSummary' : 'unrealCalSummary');
+  const gridEl    = document.getElementById(isReal ? 'realCalGrid'    : 'unrealCalGrid');
+
+  const monthNames = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  labelEl.textContent = `${year} / ${monthNames[month]}`;
+
+  const dailyMap = isReal ? buildRealizedDailyMap() : buildUnrealizedDailyMap();
+
+  // Month totals
+  let monthChange = 0, monthPrevVal = 0, monthCost = 0;
+  const prefix = `${year}-${String(month+1).padStart(2,'0')}`;
+  Object.entries(dailyMap).forEach(([ds, v]) => {
+    if (!ds.startsWith(prefix)) return;
+    if (isReal) { monthChange += v.realized; monthCost += v.cost; }
+    else        { monthChange += v.change; }
+  });
+  if (!isReal) {
+    // find last day of prev month portfolio value
+    const prevDays = Object.keys(dailyMap).filter(ds => ds < prefix + '-01').sort();
+    if (prevDays.length) monthPrevVal = dailyMap[prevDays[prevDays.length-1]].value;
+  }
+  const monthRate = isReal
+    ? (monthCost > 0 ? monthChange / monthCost : 0)
+    : (monthPrevVal > 0 ? monthChange / monthPrevVal : 0);
+
+  const mSign = monthChange >= 0;
+  summaryEl.innerHTML = `
+    <div class="cal-sum-block">
+      <div class="cal-sum-label">${isReal ? '本月已實現損益' : '本月帳戶損益'}</div>
+      <div class="cal-sum-val" style="color:${mSign?'#ff6060':'#40d48a'}">${mSign?'+':''}${fmtCalMoney(monthChange)}</div>
+    </div>
+    <div class="cal-sum-block">
+      <div class="cal-sum-label">報酬率</div>
+      <div class="cal-sum-rate" style="color:${mSign?'#ff6060':'#40d48a'}">${mSign?'+':''}${(monthRate*100).toFixed(2)}%</div>
+    </div>
+    <div class="cal-sum-block" style="margin-left:auto;">
+      <div class="cal-sum-label">有資料天數</div>
+      <div class="cal-sum-rate" style="color:var(--text2);">${Object.keys(dailyMap).filter(ds=>ds.startsWith(prefix)).length} 天</div>
+    </div>`;
+
+  // Build calendar grid
+  const firstDay = new Date(year, month, 1);
+  const lastDay  = new Date(year, month+1, 0);
+  const today    = new Date(); today.setHours(0,0,0,0);
+
+  // Mon=0 ... Sun=6 offset
+  let startDow = firstDay.getDay(); // 0=Sun
+  startDow = startDow === 0 ? 6 : startDow - 1; // convert to Mon-based
+
+  const weeks = [];
+  let week = Array(7).fill(null);
+  let weekPnl = 0, weekCost = 0, weekPrevVal = 0, hasWeekData = false;
+
+  const flushWeek = () => {
+    weeks.push({ days: [...week], pnl: weekPnl, cost: weekCost, prevVal: weekPrevVal, hasData: hasWeekData });
+    week = Array(7).fill(null);
+    weekPnl = 0; weekCost = 0; weekPrevVal = 0; hasWeekData = false;
+  };
+
+  for (let col = 0; col < startDow; col++) week[col] = 0; // empty
+
+  for (let d = 1; d <= lastDay.getDate(); d++) {
+    const dt  = new Date(year, month, d); dt.setHours(0,0,0,0);
+    const ds  = dt.toISOString().slice(0,10);
+    const dow = dt.getDay(); // 0=Sun
+    const col = dow === 0 ? 6 : dow - 1;
+    const dayData = dailyMap[ds] || null;
+
+    if (dayData) {
+      hasWeekData = true;
+      if (isReal) { weekPnl += dayData.realized; weekCost += dayData.cost; }
+      else        { weekPnl += dayData.change; }
+    }
+
+    week[col] = { d, ds, dt, data: dayData, isWeekend: dow === 0 || dow === 6, isFuture: dt > today };
+    if (col === 6 || d === lastDay.getDate()) flushWeek();
+  }
+
+  const showMode = cs.mode;
+
+  gridEl.innerHTML = weeks.map(w => {
+    const cells = w.days.map(cell => {
+      if (cell === null || cell === 0) return `<div class="cal-cell empty"></div>`;
+      const { d, data, isWeekend, isFuture } = cell;
+      if (isFuture)  return `<div class="cal-cell future-cell"><div class="cal-date-num">${d}</div></div>`;
+      if (isWeekend) return `<div class="cal-cell weekend-cell"><div class="cal-date-num" style="color:#444">${d}</div></div>`;
+      if (!data)     return `<div class="cal-cell nodata"><div class="cal-date-num">${d}</div></div>`;
+
+      const val  = isReal ? data.realized : data.change;
+      const rate = isReal
+        ? (data.cost > 0 ? data.realized / data.cost : 0)
+        : data.rate;
+
+      let cls = val > 0 ? 'profit-cell' : val < 0 ? 'loss-cell' : 'break-even';
+      const sign = val >= 0 ? '+' : '';
+      const disp = showMode === 'rate'
+        ? `${sign}${(rate*100).toFixed(2)}%`
+        : `${sign}${fmtCalMoney(val)}`;
+      const rateTxt = showMode === 'rate'
+        ? `${sign}${fmtCalMoney(val)}`
+        : `${sign}${(rate*100).toFixed(2)}%`;
+
+      return `<div class="cal-cell ${cls}">
+        <div class="cal-date-num">${d}</div>
+        <div class="cal-amount">${disp}</div>
+        <div class="cal-rate-txt">${rateTxt}</div>
+      </div>`;
+    }).join('');
+
+    // Weekly total cell
+    const wSign    = w.pnl >= 0;
+    const wRateNum = isReal
+      ? (w.cost > 0 ? w.pnl / w.cost : 0)
+      : (w.prevVal > 0 ? w.pnl / w.prevVal : 0);
+    const wCls     = w.hasData ? (wSign ? 'week-profit' : 'week-loss') : 'week-zero';
+    const wDisp    = w.hasData ? `${wSign?'+':''}${fmtCalMoney(w.pnl)}` : '--';
+    const wRateStr = w.hasData ? `${wSign?'+':''}${(wRateNum*100).toFixed(1)}%` : '';
+
+    return `<div class="cal-row">
+      ${cells}
+      <div class="cal-week-cell">
+        <div class="cal-week-label">週損益</div>
+        <div class="cal-week-val ${wCls}">${wDisp}</div>
+        <div class="cal-week-rate ${wCls}">${wRateStr}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function calNav(type, dir) {
+  const cs = calState[type];
+  cs.month += dir;
+  if (cs.month > 11) { cs.month = 0;  cs.year++; }
+  if (cs.month < 0)  { cs.month = 11; cs.year--; }
+  renderCalendar(type);
+}
+
+function setCalMode(type, mode) {
+  calState[type].mode = mode;
+  const isReal = type === 'realized';
+  document.getElementById(isReal ? 'realToggleAmt'  : 'unrealToggleAmt' ).classList.toggle('active', mode==='amount');
+  document.getElementById(isReal ? 'realToggleRate' : 'unrealToggleRate').classList.toggle('active', mode==='rate');
+  renderCalendar(type);
+}
+
+function fmtCalMoney(n) {
+  if (isNaN(n)) return '--';
+  const abs = Math.abs(n);
+  if (abs >= 10000) return (abs/10000).toFixed(1) + '萬';
+  return abs.toLocaleString('zh-TW', { maximumFractionDigits: 0 });
+}
 
 // ============================================================
 //  INIT
