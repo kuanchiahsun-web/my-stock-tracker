@@ -818,6 +818,14 @@ function normalizeStockCode(code) {
   return String(code || '').trim().toUpperCase().replace(/\.(TW|TWO)$/i, '');
 }
 
+function parsePrice(value) {
+  if (value === undefined || value === null) return null;
+  const cleaned = String(value).replace(/,/g, '').match(/\d+(?:\.\d+)?/);
+  if (!cleaned) return null;
+  const n = parseFloat(cleaned[0]);
+  return Number.isFinite(n) && n > 0 ? parseFloat(n.toFixed(2)) : null;
+}
+
 // ============================================================
 //  FIRST-RUN DATA
 // ============================================================
@@ -1554,7 +1562,7 @@ async function loadStockList(forceReload = false) {
           if (!s.Code) return;
           const code = String(s.Code).trim();
           const shortCode = code.replace(/^0+/, '') || code;
-          list.push({ code, shortCode, name: (s.Name || '').trim(), market: 'TSE', price: parseFloat(s.ClosingPrice) || 0, yahooCode: shortCode + '.TW' });
+          list.push({ code, shortCode, name: (s.Name || '').trim(), market: 'TSE', price: parsePrice(s.ClosingPrice) || 0, yahooCode: shortCode + '.TW' });
         });
       }
       if (otcRes.status === 'fulfilled' && otcRes.value) {
@@ -1563,7 +1571,7 @@ async function loadStockList(forceReload = false) {
           const code = String(s.SecuritiesCompanyCode || s.Code || '').trim();
           if (!code) return;
           const shortCode = code.replace(/^0+/, '') || code;
-          list.push({ code, shortCode, name: (s.CompanyName || s.Name || '').trim(), market: 'OTC', price: parseFloat(s.Close) || 0, yahooCode: shortCode + '.TWO' });
+          list.push({ code, shortCode, name: (s.CompanyName || s.Name || '').trim(), market: 'OTC', price: parsePrice(s.Close) || 0, yahooCode: shortCode + '.TWO' });
         });
       }
     } catch(e) { console.warn('股票清單載入失敗', e); }
@@ -1615,6 +1623,12 @@ function getYahooCodeForInput(code, searchText = '') {
   return normalized ? normalized + '.TW' : '';
 }
 
+function findStockMeta(codeOrYahooCode, searchText = '') {
+  const shortCode = normalizeStockCode(codeOrYahooCode);
+  return findStockByInput(codeOrYahooCode) || findStockByInput(searchText) ||
+    stockListCache?.find(s => s.code === shortCode || s.shortCode === shortCode) || null;
+}
+
 function fillStockFields(s, fetchPrice = false) {
   if (!s) return;
   document.getElementById('f_search').value = s.name + '  ' + s.shortCode;
@@ -1631,14 +1645,15 @@ async function fetchStockData(yahooCode) {
     `https://query2.finance.yahoo.com/v8/finance/chart/${yahooCode}?interval=1d&range=6mo`,
   ];
   for (const url of endpoints) {
-    try {
-      const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    for (const target of [url, PROXY + encodeURIComponent(url)]) {
+      try {
+      const res = await fetch(target, { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(8000) });
       if (!res.ok) continue;
       const data = await res.json();
       const result = data?.chart?.result?.[0];
       if (!result) continue;
       const meta = result.meta;
-      const currentPrice = meta?.regularMarketPrice ?? meta?.previousClose;
+      const currentPrice = parsePrice(meta?.regularMarketPrice ?? meta?.previousClose);
       const timestamps = result.timestamp || [];
       const closes = result.indicators?.quote?.[0]?.close || [];
       const history = {};
@@ -1649,15 +1664,73 @@ async function fetchStockData(yahooCode) {
           history[ds] = parseFloat(closes[i].toFixed(2));
         }
       });
-      return { price: currentPrice ? parseFloat(currentPrice.toFixed(2)) : null, history };
-    } catch(_) {}
+      return { price: currentPrice, history };
+      } catch(_) {}
+    }
   }
   return { price: null, history: {} };
+}
+
+async function fetchTextByProxy(url) {
+  for (const target of [url, PROXY + encodeURIComponent(url)]) {
+    try {
+      const res = await fetch(target, { signal: AbortSignal.timeout(8000) });
+      if (res.ok) return await res.text();
+    } catch(_) {}
+  }
+  return '';
+}
+
+function parseYahooQuotePrice(html) {
+  if (!html) return null;
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const selector = '#main-0-QuoteHeader-Proxy div div:nth-child(2) div:first-child div span:first-child';
+    const price = parsePrice(doc.querySelector(selector)?.textContent);
+    if (price) return price;
+  } catch(_) {}
+  const matches = [
+    html.match(/"regularMarketPrice"\s*:\s*\{"raw"\s*:\s*([\d.]+)/),
+    html.match(/"regularMarketPrice"\s*:\s*([\d.]+)/),
+    html.match(/"price"\s*:\s*\{"raw"\s*:\s*([\d.]+)/)
+  ];
+  for (const m of matches) {
+    const price = parsePrice(m?.[1]);
+    if (price) return price;
+  }
+  return null;
+}
+
+function parseHiStockPrice(html) {
+  if (!html) return null;
+  const metaMatch = html.match(/股價\s*([\d,.]+)/);
+  const metaPrice = parsePrice(metaMatch?.[1]);
+  if (metaPrice) return metaPrice;
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const price = parsePrice(doc.querySelector('.price, #Price1_lbTPrice, .stockInfo .price')?.textContent);
+    if (price) return price;
+  } catch(_) {}
+  return null;
+}
+
+async function fetchQuotePagePrice(shortCode) {
+  const yahooHtml = await fetchTextByProxy(`https://tw.stock.yahoo.com/quote/${shortCode}`);
+  const yahooPrice = parseYahooQuotePrice(yahooHtml);
+  if (yahooPrice) return yahooPrice;
+
+  const histockHtml = await fetchTextByProxy(`https://histock.tw/stock/${shortCode}`);
+  const histockPrice = parseHiStockPrice(histockHtml);
+  if (histockPrice) return histockPrice;
+  return null;
 }
 
 async function fetchRealtimePrice(yahooCode) {
   const { price } = await fetchStockData(yahooCode);
   if (price && price > 0) return price;
+  if (stockListCache === null || stockListPromise) await loadStockList();
+  const meta = findStockMeta(yahooCode);
+  if (meta?.price > 0) return meta.price;
   // Fallback: try CORS proxy to TWSE MIS
   try {
     const exCh = yahooCode.endsWith('.TWO')
@@ -1668,9 +1741,10 @@ async function fetchRealtimePrice(yahooCode) {
     const data = await res.json();
     const info = data?.msgArray?.[0];
     const p = info?.z !== '-' ? info?.z : info?.y;
-    if (p) return parseFloat(parseFloat(p).toFixed(2));
+    const misPrice = parsePrice(p);
+    if (misPrice) return misPrice;
   } catch(_) {}
-  return null;
+  return fetchQuotePagePrice(normalizeStockCode(yahooCode));
 }
 
 // ── Autocomplete UI ──────────────────────────────────────────
@@ -1810,13 +1884,15 @@ async function refreshAllPrices() {
   btn.disabled = true;
   setStatus(statusEl, 'loading', `<span class="spin">⟳</span> 更新中 0/${holding.length}...`);
 
-  await loadStockList();
+  await loadStockList(true);
   let done = 0, failed = 0;
   for (const s of holding) {
     const shortCode = normalizeStockCode(s.code);
     const match = stockListCache?.find(m => m.code === shortCode || m.shortCode === shortCode);
     const yahooCode = match ? match.yahooCode : getYahooCodeForInput(s.code, s.name);
-    const { price, history } = await fetchStockData(yahooCode);
+    const quoteData = await fetchStockData(yahooCode);
+    const history = quoteData.history || {};
+    const price = quoteData.price || (match?.price > 0 ? match.price : await fetchRealtimePrice(yahooCode));
     if (price !== null) {
       s.priceHistory = [...(s.priceHistory || []), price];
       s.price = price;
