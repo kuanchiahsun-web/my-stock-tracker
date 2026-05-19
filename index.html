@@ -35,6 +35,10 @@ a { color: var(--accent); text-decoration: none; }
 }
 .app-header h1 { font-size: 18px; font-weight: 700; color: var(--accent); }
 .app-header .date { color: var(--text2); font-size: 12px; }
+.sheet-status { font-size: 11px; color: var(--text2); min-width: 90px; }
+.sheet-status.ok { color: var(--green); }
+.sheet-status.err { color: var(--red); }
+.sheet-status.busy { color: var(--yellow); }
 
 .container { padding: 16px; }
 
@@ -371,6 +375,21 @@ td input.inline-edit {
 .delta-badge { font-size: 11px; padding: 1px 6px; border-radius: 4px; }
 .delta-up { background: rgba(0,200,150,0.15); color: var(--green); }
 .delta-down { background: rgba(255,77,106,0.12); color: var(--red); }
+.sheet-help {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text2);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.sheet-code {
+  min-height: 180px;
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  white-space: pre;
+}
 </style>
 </head>
 <body>
@@ -382,6 +401,9 @@ td input.inline-edit {
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()" title="備份所有資料為 JSON 檔">⬇ 備份</button>
     <button class="btn btn-ghost btn-sm" onclick="document.getElementById('importFileInput').click()" title="從 JSON 檔還原資料">⬆ 還原</button>
     <input type="file" id="importFileInput" accept=".json" style="display:none" onchange="importJSON(event)">
+    <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
+    <button class="btn btn-ghost btn-sm" onclick="openSheetSyncModal()" title="Google Sheet 同步" id="sheetSyncBtn">▦ Sheet</button>
+    <span class="sheet-status" id="sheetSyncHeaderStatus"></span>
     <div style="width:1px;height:20px;background:var(--border);margin:0 2px;"></div>
     <button class="btn btn-ghost btn-sm" onclick="showExportMenu()" title="匯出 CSV" id="exportMenuBtn">↗ 匯出CSV</button>
     <div id="exportMenu" style="display:none;position:absolute;top:48px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:6px;z-index:200;min-width:140px;">
@@ -755,6 +777,54 @@ td input.inline-edit {
   </div>
 </div>
 
+<!-- Google Sheet Sync Modal -->
+<div class="modal-overlay" id="sheetSyncModal">
+  <div class="modal" style="width:720px;">
+    <button class="close-btn" onclick="closeModal('sheetSyncModal')">✕</button>
+    <h2>Google Sheet 同步</h2>
+    <div class="form-grid">
+      <div class="form-group full">
+        <label>Google Sheet ID 或完整網址</label>
+        <input type="text" id="sheetIdInput" placeholder="https://docs.google.com/spreadsheets/d/... 或直接貼 ID">
+      </div>
+      <div class="form-group">
+        <label>工作表 GID</label>
+        <input type="text" id="sheetGidInput" placeholder="1090918017">
+      </div>
+      <div class="form-group">
+        <label>自動同步間隔（分鐘）</label>
+        <input type="number" id="sheetIntervalInput" min="1" step="1" placeholder="1">
+      </div>
+      <div class="form-group full">
+        <label>Apps Script Web App URL（要寫回表單時必填）</label>
+        <input type="text" id="sheetWebAppInput" placeholder="https://script.google.com/macros/s/.../exec">
+      </div>
+      <div class="form-group full" style="flex-direction:row;align-items:center;gap:8px;">
+        <input type="checkbox" id="sheetAutoInput" style="width:auto;">
+        <label for="sheetAutoInput" style="text-transform:none;">啟用自動同步：本頁有修改時寫回 Sheet，並定期讀取 Sheet 更新</label>
+      </div>
+      <div class="form-group full">
+        <div class="sheet-help">
+          只輸入 Sheet ID 時，可從公開表單匯入持股資料；若要雙向同步與寫回 Google Sheet，請在同一份表單建立 Apps Script、部署成 Web App，並貼上 URL。同步會使用目前 GID 的工作表作為持股列表，另用「交易紀錄」工作表同步交易。
+        </div>
+      </div>
+      <div class="form-group full">
+        <label>Apps Script 範例</label>
+        <textarea id="sheetScriptSample" class="sheet-code" readonly></textarea>
+      </div>
+    </div>
+    <div class="form-actions" style="justify-content:space-between;align-items:center;">
+      <span id="sheetSyncModalStatus" class="sheet-status"></span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+        <button class="btn btn-ghost" onclick="copySheetScript()">複製 Apps Script</button>
+        <button class="btn btn-yellow" onclick="importFromSheet()">從 Sheet 匯入</button>
+        <button class="btn btn-success" onclick="pushToSheetNow()">寫回 Sheet</button>
+        <button class="btn btn-primary" onclick="saveSheetSyncSettings()">儲存設定</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 // ============================================================
 //  DATA STORE
@@ -769,6 +839,20 @@ let state = {
 };
 
 const STORAGE_KEY = 'stock_tracker_v2';
+const SHEET_SYNC_KEY = 'stock_tracker_sheet_sync_v1';
+let sheetSync = {
+  sheetId: '1cOILrG5tekkmvu0BsXs76M51Nj5NUndkJGDTY8s41RA',
+  gid: '1090918017',
+  webAppUrl: '',
+  auto: false,
+  intervalMinutes: 1,
+  lastSync: '',
+  lastRemoteUpdatedAt: '',
+  dirty: false
+};
+let sheetSyncTimer = null;
+let sheetPushTimer = null;
+let suppressSheetPush = false;
 
 function loadState() {
   try {
@@ -787,6 +871,7 @@ function loadState() {
 
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  if (!suppressSheetPush) scheduleSheetPush();
 }
 
 function clearLegacySeedPortfolio() {
@@ -1495,6 +1580,419 @@ document.querySelectorAll('.modal-overlay').forEach(overlay => {
     if (e.target === overlay) closeModal(overlay.id);
   });
 });
+
+// ============================================================
+//  GOOGLE SHEET SYNC
+// ============================================================
+const SHEET_SCRIPT_SAMPLE = `const STOCK_HEADERS = ['股票名稱','代碼','現價','成本價','股數','買入日期','狀態','賣出日期','賣出價格','股利','備註'];
+const TX_HEADERS = ['日期','股票名稱','代碼','動作','股數','成交價','手續費','成交金額','備註'];
+
+function jsonOut(obj, callback) {
+  const text = JSON.stringify(obj);
+  if (callback) {
+    return ContentService.createTextOutput(callback + '(' + text + ')').setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  return ContentService.createTextOutput(text).setMimeType(ContentService.MimeType.JSON);
+}
+
+function sheetByGid(ss, gid) {
+  const id = Number(gid || 0);
+  return ss.getSheets().find(s => s.getSheetId() === id) || ss.getSheets()[0];
+}
+
+function rowsToObjects(sheet) {
+  const values = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return [];
+  const headers = values[0].map(h => String(h).trim());
+  return values.slice(1).filter(r => r.some(Boolean)).map(row => {
+    const o = {};
+    headers.forEach((h, i) => o[h] = row[i]);
+    return o;
+  });
+}
+
+function readData(sheetId, gid) {
+  const ss = SpreadsheetApp.openById(sheetId);
+  const stockSheet = sheetByGid(ss, gid);
+  const txSheet = ss.getSheetByName('交易紀錄');
+  const props = PropertiesService.getDocumentProperties();
+  return {
+    ok: true,
+    updatedAt: props.getProperty('codexUpdatedAt') || '',
+    rows: rowsToObjects(stockSheet),
+    transactionRows: txSheet ? rowsToObjects(txSheet) : []
+  };
+}
+
+function ensureHeaders(sheet, headers) {
+  const current = sheet.getRange(1, 1, 1, headers.length).getDisplayValues()[0];
+  if (!current.some(Boolean)) sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+}
+
+function writeRows(sheet, headers, rows) {
+  ensureHeaders(sheet, headers);
+  const last = Math.max(sheet.getLastRow() - 1, 0);
+  if (last) sheet.getRange(2, 1, last, headers.length).clearContent();
+  if (rows.length) sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+}
+
+function writeData(sheetId, gid, data) {
+  const ss = SpreadsheetApp.openById(sheetId);
+  const stockSheet = sheetByGid(ss, gid);
+  const txSheet = ss.getSheetByName('交易紀錄') || ss.insertSheet('交易紀錄');
+  const stocks = data.stocks || [];
+  const txs = data.transactions || [];
+  writeRows(stockSheet, STOCK_HEADERS, stocks.map(s => [
+    s.name || '', s.code || '', s.price || '', s.cost || '', s.shares || '',
+    s.buyDate || '', s.status || '持有中', s.sellDate || '', s.sellPrice || '',
+    s.dividend || '', s.note || ''
+  ]));
+  writeRows(txSheet, TX_HEADERS, txs.map(t => [
+    t.date || '', t.name || '', t.code || '', t.action || '', t.shares || '',
+    t.price || '', t.fee || '', t.amount || '', t.note || ''
+  ]));
+  const updatedAt = new Date().toISOString();
+  PropertiesService.getDocumentProperties().setProperty('codexUpdatedAt', updatedAt);
+  return { ok: true, updatedAt };
+}
+
+function doGet(e) {
+  const p = e.parameter;
+  try {
+    return jsonOut(readData(p.sheetId, p.gid), p.callback);
+  } catch (err) {
+    return jsonOut({ ok:false, error:String(err) }, p.callback);
+  }
+}
+
+function doPost(e) {
+  try {
+    const body = JSON.parse(e.postData.contents || '{}');
+    return jsonOut(writeData(body.sheetId, body.gid, body.data || {}));
+  } catch (err) {
+    return jsonOut({ ok:false, error:String(err) });
+  }
+}`;
+
+function loadSheetSyncConfig() {
+  try {
+    const raw = localStorage.getItem(SHEET_SYNC_KEY);
+    if (raw) sheetSync = { ...sheetSync, ...JSON.parse(raw) };
+  } catch(_) {}
+}
+
+function saveSheetSyncConfig() {
+  localStorage.setItem(SHEET_SYNC_KEY, JSON.stringify(sheetSync));
+}
+
+function parseSheetRef(value) {
+  const raw = String(value || '').trim();
+  const idMatch = raw.match(/\/spreadsheets\/d\/([^/]+)/) || raw.match(/^([A-Za-z0-9_-]{20,})$/);
+  const gidMatch = raw.match(/[?&#]gid=(\d+)/);
+  return {
+    sheetId: idMatch ? idMatch[1] : raw,
+    gid: gidMatch ? gidMatch[1] : ''
+  };
+}
+
+function openSheetSyncModal() {
+  document.getElementById('sheetIdInput').value = sheetSync.sheetId;
+  document.getElementById('sheetGidInput').value = sheetSync.gid || '1090918017';
+  document.getElementById('sheetWebAppInput').value = sheetSync.webAppUrl;
+  document.getElementById('sheetAutoInput').checked = !!sheetSync.auto;
+  document.getElementById('sheetIntervalInput').value = sheetSync.intervalMinutes || 1;
+  document.getElementById('sheetScriptSample').value = SHEET_SCRIPT_SAMPLE;
+  setSheetStatus('modal', sheetSync.lastSync ? `上次同步 ${sheetSync.lastSync}` : '尚未同步', '');
+  document.getElementById('sheetSyncModal').classList.add('open');
+}
+
+function syncSheetSettingsFromInputs() {
+  const parsed = parseSheetRef(document.getElementById('sheetIdInput').value);
+  sheetSync.sheetId = parsed.sheetId;
+  sheetSync.gid = parsed.gid || document.getElementById('sheetGidInput').value.trim() || '0';
+  sheetSync.webAppUrl = document.getElementById('sheetWebAppInput').value.trim();
+  sheetSync.auto = document.getElementById('sheetAutoInput').checked;
+  sheetSync.intervalMinutes = Math.max(1, parseInt(document.getElementById('sheetIntervalInput').value, 10) || 1);
+}
+
+function isSheetSyncModalOpen() {
+  return document.getElementById('sheetSyncModal')?.classList.contains('open');
+}
+
+function saveSheetSyncSettings() {
+  syncSheetSettingsFromInputs();
+  saveSheetSyncConfig();
+  startSheetSyncTimer();
+  updateSheetSyncHeader();
+  setSheetStatus('modal', '設定已儲存', 'ok');
+}
+
+async function copySheetScript() {
+  try {
+    await navigator.clipboard.writeText(SHEET_SCRIPT_SAMPLE);
+    setSheetStatus('modal', 'Apps Script 已複製', 'ok');
+  } catch(_) {
+    const el = document.getElementById('sheetScriptSample');
+    el.focus(); el.select();
+    setSheetStatus('modal', '請手動複製上方程式碼', 'busy');
+  }
+}
+
+function setSheetStatus(place, msg, type = '') {
+  const id = place === 'modal' ? 'sheetSyncModalStatus' : 'sheetSyncHeaderStatus';
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = msg || '';
+  el.className = `sheet-status ${type || ''}`.trim();
+}
+
+function updateSheetSyncHeader() {
+  const label = sheetSync.sheetId ? (sheetSync.auto ? 'Sheet 自動' : 'Sheet 已設定') : '';
+  setSheetStatus('header', label, sheetSync.auto ? 'ok' : '');
+}
+
+function buildSheetPayload() {
+  return {
+    updatedAt: new Date().toISOString(),
+    initialCash: state.initialCash,
+    stocks: state.stocks.map(s => ({ ...s })),
+    transactions: state.transactions.map(t => ({ ...t }))
+  };
+}
+
+function normalizeSheetState(data) {
+  const rows = data.rows || data.stocks || [];
+  const transactionRows = data.transactionRows || data.transactions || [];
+  const stocks = Array.isArray(data.stocks) && !data.rows ? data.stocks : rows.map(rowToStock).filter(Boolean);
+  const transactions = Array.isArray(data.transactions) && !data.transactionRows ? data.transactions : transactionRows.map(rowToTx).filter(Boolean);
+  let nextId = 1;
+  stocks.forEach(s => { s.id = Number(s.id) || nextId++; nextId = Math.max(nextId, s.id + 1); });
+  transactions.forEach(t => { t.id = Number(t.id) || nextId++; nextId = Math.max(nextId, t.id + 1); });
+  return {
+    stocks,
+    transactions,
+    initialCash: parseNumber(data.initialCash) ?? state.initialCash,
+    nextId
+  };
+}
+
+function firstValue(row, names) {
+  const normalized = {};
+  Object.keys(row || {}).forEach(k => normalized[String(k).replace(/\s/g, '').toLowerCase()] = row[k]);
+  for (const name of names) {
+    const key = String(name).replace(/\s/g, '').toLowerCase();
+    if (normalized[key] !== undefined && normalized[key] !== '') return normalized[key];
+  }
+  return '';
+}
+
+function parseNumber(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const n = parseFloat(String(value).replace(/[$,，\s]/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeStatus(value) {
+  const text = String(value || '').trim();
+  if (text.includes('賣') || text.toLowerCase() === 'sold') return '已賣出';
+  return '持有中';
+}
+
+function rowToStock(row) {
+  const name = firstValue(row, ['股票名稱','名稱','股票','name']);
+  const code = firstValue(row, ['代碼','股票代碼','股票代號','證券代號','code']);
+  const shares = parseNumber(firstValue(row, ['股數','持股','庫存股數','shares'])) || 0;
+  const cost = parseNumber(firstValue(row, ['成本價','買入價格','買進價格','成本','cost'])) || 0;
+  if (!name && !code) return null;
+  const price = parseNumber(firstValue(row, ['現價','現值','目前價格','收盤價','price'])) || cost;
+  const buyDate = firstValue(row, ['買入日期','買進日期','日期','buyDate']);
+  const sellDate = firstValue(row, ['賣出日期','sellDate']);
+  const sellPrice = parseNumber(firstValue(row, ['賣出價格','賣出價','sellPrice'])) || 0;
+  const dividend = parseNumber(firstValue(row, ['股利','股息','dividend'])) || 0;
+  const note = firstValue(row, ['備註','note']);
+  const status = normalizeStatus(firstValue(row, ['狀態','status']));
+  return { name, code, price, cost, shares, buyDate, status, sellDate, sellPrice, dividend, note, priceHistory: generatePriceHistory(cost || price, price, buyDate) };
+}
+
+function rowToTx(row) {
+  const date = firstValue(row, ['日期','交易日期','date']);
+  const name = firstValue(row, ['股票名稱','名稱','股票','name']);
+  const code = firstValue(row, ['代碼','股票代號','code']);
+  const action = firstValue(row, ['動作','買賣','action']) || '買入';
+  const shares = parseNumber(firstValue(row, ['股數','shares'])) || 0;
+  const price = parseNumber(firstValue(row, ['成交價','價格','price'])) || 0;
+  if (!date || !name || !shares || !price) return null;
+  const fee = parseNumber(firstValue(row, ['手續費','稅費','fee'])) || 0;
+  const amount = parseNumber(firstValue(row, ['成交金額','amount'])) || shares * price;
+  const note = firstValue(row, ['備註','note']);
+  return { date, name, code, action, shares, price, fee, amount, note };
+}
+
+function csvToRows(csv) {
+  const rows = [];
+  let row = [], cell = '', quoted = false;
+  for (let i = 0; i < csv.length; i++) {
+    const ch = csv[i], next = csv[i + 1];
+    if (ch === '"' && quoted && next === '"') { cell += '"'; i++; }
+    else if (ch === '"') quoted = !quoted;
+    else if (ch === ',' && !quoted) { row.push(cell); cell = ''; }
+    else if ((ch === '\n' || ch === '\r') && !quoted) {
+      if (cell || row.length) { row.push(cell); rows.push(row); row = []; cell = ''; }
+      if (ch === '\r' && next === '\n') i++;
+    } else cell += ch;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  const headers = (rows.shift() || []).map(h => h.trim());
+  return rows.filter(r => r.some(Boolean)).map(r => {
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = r[i] || '');
+    return obj;
+  });
+}
+
+async function readPublicSheetRows() {
+  const url = `https://docs.google.com/spreadsheets/d/${sheetSync.sheetId}/gviz/tq?tqx=out:csv&gid=${sheetSync.gid}`;
+  const res = await tryFetch(url);
+  if (!res) throw new Error('無法讀取公開 Sheet，請確認表單已開放「知道連結者可檢視」或使用 Apps Script。');
+  return csvToRows(await res.text());
+}
+
+function jsonpReadSheet() {
+  return new Promise((resolve, reject) => {
+    const cb = `sheetSyncCb_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    const script = document.createElement('script');
+    const params = new URLSearchParams({ action: 'read', sheetId: sheetSync.sheetId, gid: sheetSync.gid, callback: cb });
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error('讀取逾時'));
+    }, 12000);
+    function cleanup() {
+      clearTimeout(timeout);
+      delete window[cb];
+      script.remove();
+    }
+    window[cb] = data => { cleanup(); resolve(data); };
+    script.onerror = () => { cleanup(); reject(new Error('Apps Script 讀取失敗')); };
+    script.src = `${sheetSync.webAppUrl}?${params.toString()}`;
+    document.body.appendChild(script);
+  });
+}
+
+async function readSheetData() {
+  if (sheetSync.webAppUrl) return jsonpReadSheet();
+  return { rows: await readPublicSheetRows(), updatedAt: '' };
+}
+
+async function writeSheetData() {
+  if (!sheetSync.webAppUrl) throw new Error('寫回 Google Sheet 需要 Apps Script Web App URL。');
+  const body = JSON.stringify({
+    action: 'write',
+    sheetId: sheetSync.sheetId,
+    gid: sheetSync.gid,
+    data: buildSheetPayload()
+  });
+  try {
+    const res = await fetch(sheetSync.webAppUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '寫回失敗');
+    return data;
+  } catch(err) {
+    if (navigator.sendBeacon) {
+      const ok = navigator.sendBeacon(sheetSync.webAppUrl, new Blob([body], { type: 'text/plain;charset=utf-8' }));
+      if (ok) return { ok: true, queued: true, updatedAt: new Date().toISOString() };
+    }
+    throw err;
+  }
+}
+
+async function importFromSheet(silent = false) {
+  if (isSheetSyncModalOpen()) {
+    syncSheetSettingsFromInputs();
+    saveSheetSyncConfig();
+  }
+  if (!sheetSync.sheetId) { alert('請先輸入 Google Sheet ID 或網址'); return; }
+  try {
+    setSheetStatus('modal', '讀取 Sheet 中...', 'busy');
+    setSheetStatus('header', 'Sheet 讀取中', 'busy');
+    const remote = await readSheetData();
+    if (remote.ok === false) throw new Error(remote.error || '讀取失敗');
+    const incoming = normalizeSheetState(remote);
+    if (!silent && !confirm(`從 Sheet 匯入會覆蓋目前頁面資料。\n持股 ${incoming.stocks.length} 檔，交易 ${incoming.transactions.length} 筆。確定匯入？`)) return;
+    suppressSheetPush = true;
+    state.stocks = incoming.stocks;
+    state.transactions = incoming.transactions;
+    state.initialCash = incoming.initialCash;
+    state.nextId = incoming.nextId;
+    saveState();
+    suppressSheetPush = false;
+    sheetSync.lastRemoteUpdatedAt = remote.updatedAt || '';
+    sheetSync.lastSync = new Date().toLocaleString('zh-TW');
+    sheetSync.dirty = false;
+    saveSheetSyncConfig();
+    renderAll();
+    updateSheetSyncHeader();
+    setSheetStatus('modal', '匯入完成', 'ok');
+    setSheetStatus('header', 'Sheet 已同步', 'ok');
+  } catch(err) {
+    suppressSheetPush = false;
+    setSheetStatus('modal', err.message, 'err');
+    setSheetStatus('header', 'Sheet 失敗', 'err');
+    if (!silent) alert('Sheet 匯入失敗：' + err.message);
+  }
+}
+
+async function pushToSheetNow(silent = false) {
+  if (isSheetSyncModalOpen()) {
+    syncSheetSettingsFromInputs();
+    saveSheetSyncConfig();
+  }
+  if (!sheetSync.sheetId || !sheetSync.webAppUrl) {
+    if (!silent) alert('寫回 Sheet 需要 Sheet ID 與 Apps Script Web App URL。');
+    return;
+  }
+  try {
+    setSheetStatus('modal', '寫回 Sheet 中...', 'busy');
+    setSheetStatus('header', 'Sheet 寫回中', 'busy');
+    const result = await writeSheetData();
+    sheetSync.lastSync = new Date().toLocaleString('zh-TW');
+    sheetSync.lastRemoteUpdatedAt = result.updatedAt || new Date().toISOString();
+    sheetSync.dirty = false;
+    saveSheetSyncConfig();
+    setSheetStatus('modal', result.queued ? '已送出寫回，Google 正在處理' : '寫回完成', 'ok');
+    setSheetStatus('header', 'Sheet 已同步', 'ok');
+  } catch(err) {
+    setSheetStatus('modal', err.message, 'err');
+    setSheetStatus('header', 'Sheet 失敗', 'err');
+    if (!silent) alert('Sheet 寫回失敗：' + err.message);
+  }
+}
+
+function scheduleSheetPush() {
+  if (!sheetSync.auto || !sheetSync.webAppUrl || !sheetSync.sheetId) return;
+  sheetSync.dirty = true;
+  saveSheetSyncConfig();
+  clearTimeout(sheetPushTimer);
+  sheetPushTimer = setTimeout(() => pushToSheetNow(true), 1500);
+}
+
+function startSheetSyncTimer() {
+  if (sheetSyncTimer) clearInterval(sheetSyncTimer);
+  if (!sheetSync.auto || !sheetSync.sheetId) return;
+  const ms = Math.max(1, sheetSync.intervalMinutes || 1) * 60 * 1000;
+  sheetSyncTimer = setInterval(async () => {
+    if (sheetSync.dirty && sheetSync.webAppUrl) await pushToSheetNow(true);
+    else if (sheetSync.webAppUrl) {
+      try {
+        const remote = await readSheetData();
+        if (remote.updatedAt && remote.updatedAt !== sheetSync.lastRemoteUpdatedAt) await importFromSheet(true);
+      } catch(_) {}
+    }
+  }, ms);
+}
 
 // ============================================================
 //  UTILS
@@ -2296,7 +2794,10 @@ function fmtCalMoney(n) {
 //  INIT
 // ============================================================
 loadState();
+loadSheetSyncConfig();
 renderAll();
+updateSheetSyncHeader();
+startSheetSyncTimer();
 
 // ── Auto-refresh logic ───────────────────────────────────────
 function isTWMarketOpen() {
