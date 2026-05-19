@@ -487,7 +487,7 @@ td input.inline-edit {
         <div class="form-group" style="margin-bottom:12px;">
           <label>初始虛擬現金 (NTD)</label>
           <div style="display:flex;gap:8px;">
-            <input type="number" id="initialCashInput" placeholder="1000000" style="flex:1;">
+            <input type="number" id="initialCashInput" placeholder="請輸入初始現金" style="flex:1;">
             <button class="btn btn-primary" onclick="setInitialCash()">設定</button>
           </div>
         </div>
@@ -762,7 +762,7 @@ td input.inline-edit {
 let state = {
   stocks: [],
   transactions: [],
-  initialCash: 1000000,
+  initialCash: 0,
   twse: 40579.45,
   futures: 40498,
   nextId: 1
@@ -776,6 +776,7 @@ function loadState() {
     if (raw) {
       const saved = JSON.parse(raw);
       state = { ...state, ...saved };
+      clearLegacySeedPortfolio();
     } else {
       seedDefaultData();
     }
@@ -788,29 +789,43 @@ function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
+function clearLegacySeedPortfolio() {
+  const legacyCodes = ['3450.TW','2327.TW','6182.TWO','1809.TWO','3481.TW','6116.TW','3024.TW','6182.TW','5425.TW','3048.TW'];
+  const hasOnlyLegacyStocks = Array.isArray(state.stocks) &&
+    state.stocks.length === legacyCodes.length &&
+    state.stocks.every(s => legacyCodes.includes(String(s.code || '').toUpperCase()));
+  const hasTransactions = Array.isArray(state.transactions) && state.transactions.length > 0;
+  if (hasOnlyLegacyStocks && !hasTransactions) {
+    state.stocks = [];
+    state.nextId = 1;
+    saveState();
+  }
+}
+
+function toLocalDateString(date = new Date()) {
+  const d = date instanceof Date ? date : new Date(date);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function parseLocalDate(dateStr) {
+  if (!dateStr) return null;
+  const [y, m, d] = String(dateStr).slice(0, 10).split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d);
+}
+
+function normalizeStockCode(code) {
+  return String(code || '').trim().toUpperCase().replace(/\.(TW|TWO)$/i, '');
+}
+
 // ============================================================
-//  SEED DATA (from Excel)
+//  FIRST-RUN DATA
 // ============================================================
 function seedDefaultData() {
-  const today = new Date().toISOString().slice(0, 10);
-  const defaultStocks = [
-    { name: '聯鈞',   code: '3450.TW',  price: 384,   cost: 391,   shares: 1000, buyDate: '2024-01-15', status: '持有中', sellDate: '', sellPrice: 0, dividend: 0, note: '', priceHistory: [] },
-    { name: '國巨',   code: '2327.TW',  price: 492.5, cost: 386,   shares: 1000, buyDate: '2023-11-20', status: '持有中', sellDate: '', sellPrice: 0, dividend: 0, note: '', priceHistory: [] },
-    { name: '合晶',   code: '6182.TWO', price: 37.25, cost: 57.6,  shares: 1000, buyDate: '2024-03-10', status: '持有中', sellDate: '', sellPrice: 0, dividend: 0, note: '', priceHistory: [] },
-    { name: '中釉',   code: '1809.TWO', price: 37.25, cost: 41.8,  shares: 1000, buyDate: '2024-02-05', status: '持有中', sellDate: '', sellPrice: 0, dividend: 0, note: '', priceHistory: [] },
-    { name: '群創',   code: '3481.TW',  price: 35.7,  cost: 34.8,  shares: 1000, buyDate: '2024-04-01', status: '持有中', sellDate: '', sellPrice: 0, dividend: 0, note: '', priceHistory: [] },
-    { name: '彩晶',   code: '6116.TW',  price: 9.84,  cost: 11,    shares: 1000, buyDate: '2024-05-20', status: '持有中', sellDate: '', sellPrice: 0, dividend: 0, note: '', priceHistory: [] },
-    { name: '憶聲',   code: '3024.TW',  price: 17.25, cost: 16.3,  shares: 1000, buyDate: '2024-06-15', status: '持有中', sellDate: '', sellPrice: 0, dividend: 0, note: '', priceHistory: [] },
-    { name: '合晶(B)', code: '6182.TW', price: 52.3,  cost: 57.6,  shares: 1000, buyDate: '2024-07-01', status: '持有中', sellDate: '', sellPrice: 0, dividend: 0, note: '', priceHistory: [] },
-    { name: '台半',   code: '5425.TW',  price: 75.1,  cost: 76.28, shares: 300,  buyDate: '2024-08-10', status: '持有中', sellDate: '', sellPrice: 0, dividend: 0, note: '', priceHistory: [] },
-    { name: '益登',   code: '3048.TW',  price: 58,    cost: 56.8,  shares: 1000, buyDate: '2024-09-05', status: '持有中', sellDate: '', sellPrice: 0, dividend: 0, note: '', priceHistory: [] },
-  ];
-  defaultStocks.forEach((s, i) => {
-    s.id = i + 1;
-    s.priceHistory = generatePriceHistory(s.cost, s.price, s.buyDate);
-  });
-  state.stocks = defaultStocks;
-  state.nextId = defaultStocks.length + 1;
+  state.stocks = [];
+  state.transactions = [];
+  state.initialCash = 0;
+  state.nextId = 1;
   saveState();
 }
 
@@ -819,7 +834,8 @@ function seedDefaultData() {
 // ============================================================
 function generatePriceHistory(costPrice, currentPrice, buyDateStr) {
   if (!buyDateStr) return [];
-  const buyDate = new Date(buyDateStr);
+  const buyDate = parseLocalDate(buyDateStr);
+  if (!buyDate) return [];
   const today = new Date();
   let days = Math.round((today - buyDate) / 86400000);
   if (days < 2) days = 30;
@@ -853,8 +869,11 @@ function calcRealized(s) {
 
 function calcHoldingDays(s) {
   if (!s.buyDate) return 0;
-  const end = s.status === '已賣出' && s.sellDate ? new Date(s.sellDate) : new Date();
-  return Math.round((end - new Date(s.buyDate)) / 86400000);
+  const buyDate = parseLocalDate(s.buyDate);
+  if (!buyDate) return 0;
+  const end = s.status === '已賣出' && s.sellDate ? parseLocalDate(s.sellDate) : new Date();
+  if (!end) return 0;
+  return Math.round((end - buyDate) / 86400000);
 }
 
 function calcPortfolioStats() {
@@ -1154,7 +1173,7 @@ function renderBigChart(stock) {
   const isUp = data[data.length - 1] >= data[0];
   const color = isUp ? '#ff4d6a' : '#00c896ff4d6a';
 
-  const buyDate = new Date(stock.buyDate || new Date());
+  const buyDate = parseLocalDate(stock.buyDate) || new Date();
   const labels = data.map((_, i) => {
     const d = new Date(buyDate);
     const step = Math.round((new Date() - buyDate) / 86400000 / data.length);
@@ -1242,7 +1261,7 @@ function openAddModal() {
   editingStockId = null;
   document.getElementById('stockModalTitle').textContent = '新增持股';
   clearStockForm();
-  document.getElementById('f_buyDate').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('f_buyDate').value = toLocalDateString();
   toggleSellFields('持有中');
   document.getElementById('stockModal').classList.add('open');
 }
@@ -1328,7 +1347,7 @@ function markSold(id) {
   if (isNaN(price) || price <= 0) { alert('請輸入有效的賣出價格'); return; }
   s.status = '已賣出';
   s.sellPrice = price;
-  s.sellDate = new Date().toISOString().slice(0, 10);
+  s.sellDate = toLocalDateString();
   // Auto-add transaction
   const txId = state.nextId++;
   state.transactions.push({
@@ -1388,7 +1407,7 @@ function updateAllPnl() {
 //  TRANSACTION MODAL
 // ============================================================
 function openTxModal() {
-  document.getElementById('tx_date').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('tx_date').value = toLocalDateString();
   document.getElementById('tx_action').value = '買入';
   document.getElementById('tx_name').value = '';
   document.getElementById('tx_code').value = '';
@@ -1514,7 +1533,7 @@ async function loadStockList(forceReload = false) {
         const raw = sessionStorage.getItem('tw_stock_list');
         if (raw) {
           const { date, data } = JSON.parse(raw);
-          const today = new Date().toISOString().slice(0, 10);
+          const today = toLocalDateString();
           if (date === today && Array.isArray(data) && data.length > 0) {
             stockListCache = data;
             return data;
@@ -1552,7 +1571,7 @@ async function loadStockList(forceReload = false) {
     stockListCache = list;
     if (list.length > 0) {
       try {
-        sessionStorage.setItem('tw_stock_list', JSON.stringify({ date: new Date().toISOString().slice(0, 10), data: list }));
+        sessionStorage.setItem('tw_stock_list', JSON.stringify({ date: toLocalDateString(), data: list }));
       } catch(_) {}
     }
     return list;
@@ -1585,6 +1604,15 @@ function findStockByInput(input) {
     s.yahooCode.toUpperCase().startsWith(code + '.') ||
     s.name.toLowerCase() === lower
   ) || null;
+}
+
+function getYahooCodeForInput(code, searchText = '') {
+  const normalized = normalizeStockCode(code);
+  const match = findStockByInput(code) || findStockByInput(searchText) ||
+    stockListCache?.find(s => s.code === normalized || s.shortCode === normalized);
+  if (match) return match.yahooCode;
+  if (/\.(TW|TWO)$/i.test(String(code || ''))) return String(code).trim().toUpperCase();
+  return normalized ? normalized + '.TW' : '';
 }
 
 function fillStockFields(s, fetchPrice = false) {
@@ -1755,7 +1783,7 @@ async function fetchAndFillPrice(yahooCodeOverride) {
     if (stockListCache === null || stockListPromise) await loadStockList();
     const match = findStockByInput(code) || findStockByInput(searchInput.value);
     if (match) fillStockFields(match);
-    yahooCode = match ? match.yahooCode : code.replace(/\.(TW|TWO)$/i, '') + '.TW';
+    yahooCode = getYahooCodeForInput(code, searchInput.value);
   }
 
   btn.disabled = true;
@@ -1785,8 +1813,9 @@ async function refreshAllPrices() {
   await loadStockList();
   let done = 0, failed = 0;
   for (const s of holding) {
-    const match = stockListCache?.find(m => s.code.replace('.TW','').replace('.TWO','') === m.code);
-    const yahooCode = match ? match.yahooCode : (s.code.includes('.') ? s.code : s.code + '.TW');
+    const shortCode = normalizeStockCode(s.code);
+    const match = stockListCache?.find(m => m.code === shortCode || m.shortCode === shortCode);
+    const yahooCode = match ? match.yahooCode : getYahooCodeForInput(s.code, s.name);
     const { price, history } = await fetchStockData(yahooCode);
     if (price !== null) {
       s.priceHistory = [...(s.priceHistory || []), price];
@@ -1829,7 +1858,7 @@ function exportJSON() {
   const blob = new Blob([data], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const date = toLocalDateString().replace(/-/g, '');
   a.href = url;
   a.download = `股票追蹤備份_${date}.json`;
   a.click();
@@ -1870,7 +1899,9 @@ function exportPortfolioCSV() {
     const unrealized = s.status === '持有中' ? (s.price - s.cost) * s.shares : '';
     const pnlRate = s.status === '持有中' && s.cost > 0 ? ((s.price - s.cost) / s.cost * 100).toFixed(2) + '%' : '';
     const realized = s.status === '已賣出' ? (s.sellPrice - s.cost) * s.shares + (s.dividend || 0) : '';
-    const holdDays = s.buyDate ? Math.round((new Date(s.status==='已賣出'&&s.sellDate?s.sellDate:new Date()) - new Date(s.buyDate)) / 86400000) : '';
+    const startDate = parseLocalDate(s.buyDate);
+    const endDate = s.status === '已賣出' && s.sellDate ? parseLocalDate(s.sellDate) : new Date();
+    const holdDays = startDate && endDate ? Math.round((endDate - startDate) / 86400000) : '';
     return [s.name, s.code, s.price, s.cost, s.shares, cost, mktVal, unrealized, pnlRate, realized, s.buyDate||'', holdDays, s.status, s.sellDate||'', s.sellPrice||''];
   });
   downloadCSV(BOM + [headers, ...rows].map(r => r.map(v => `"${v}"`).join(',')).join('\n'), `持股列表_${csvDate()}.csv`);
@@ -1897,7 +1928,7 @@ function downloadCSV(content, filename) {
   URL.revokeObjectURL(url);
 }
 
-function csvDate() { return new Date().toISOString().slice(0, 10).replace(/-/g, ''); }
+function csvDate() { return toLocalDateString().replace(/-/g, ''); }
 
 function showExportMenu() {
   const menu = document.getElementById('exportMenu');
@@ -1921,10 +1952,12 @@ const calState = {
 // ── Price interpolation ──────────────────────────────────────
 function getPriceOnDate(stock, dateStr) {
   if (!stock.buyDate || !stock.priceHistory?.length) return null;
-  const buyDate  = new Date(stock.buyDate);
-  const target   = new Date(dateStr);
+  const buyDate  = parseLocalDate(stock.buyDate);
+  const target   = parseLocalDate(dateStr);
+  if (!buyDate || !target) return null;
   if (target < buyDate) return null;
-  const endDate  = stock.status === '已賣出' && stock.sellDate ? new Date(stock.sellDate) : new Date();
+  const endDate  = stock.status === '已賣出' && stock.sellDate ? parseLocalDate(stock.sellDate) : new Date();
+  if (!endDate) return null;
   if (target > endDate) return null;
   const holdDays = Math.max(1, Math.round((endDate - buyDate) / 86400000));
   const daysIn   = Math.round((target - buyDate) / 86400000);
@@ -1944,10 +1977,10 @@ function buildUnrealizedDailyMap() {
 
   state.stocks.forEach(stock => {
     if (!stock.buyDate || stock.status === '已賣出') return;
-    const buyDate = new Date(stock.buyDate); buyDate.setHours(0,0,0,0);
+    const buyDate = parseLocalDate(stock.buyDate); if (!buyDate) return; buyDate.setHours(0,0,0,0);
     const hp = stock.historicalPrices || {};
     const hpDates = Object.keys(hp).filter(ds => {
-      const d = new Date(ds); d.setHours(0,0,0,0);
+      const d = parseLocalDate(ds); if (!d) return false; d.setHours(0,0,0,0);
       return d >= buyDate && d <= today;
     });
 
@@ -1962,7 +1995,7 @@ function buildUnrealizedDailyMap() {
       for (let d = 0; d <= days; d++) {
         const dt = new Date(buyDate); dt.setDate(dt.getDate() + d);
         if (dt > today) break;
-        const ds = dt.toISOString().slice(0,10);
+        const ds = toLocalDateString(dt);
         const price = getPriceOnDate(stock, ds);
         if (price === null) continue;
         valueByDate[ds] = (valueByDate[ds] || 0) + price * stock.shares;
@@ -2089,7 +2122,7 @@ function renderCalendar(type) {
 
   for (let d = 1; d <= lastDay.getDate(); d++) {
     const dt  = new Date(year, month, d); dt.setHours(0,0,0,0);
-    const ds  = dt.toISOString().slice(0,10);
+    const ds  = toLocalDateString(dt);
     const dow = dt.getDay();
     const col = dow === 0 ? 6 : dow - 1;
     const dayData = dailyMap[ds] || null;
